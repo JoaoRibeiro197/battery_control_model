@@ -1,13 +1,10 @@
 from bokeh.io import curdoc
 from bokeh.layouts import column,row
-from bokeh.models import ColumnDataSource,TextInput,Button,DataTable,TableColumn,NumberFormatter
+from bokeh.models import ColumnDataSource,TextInput,Button,DataTable,TableColumn,NumberFormatter, CustomJS, Div
 from bokeh.plotting import figure
 from datetime import datetime,timedelta,timezone
 from urllib.request import urlopen
 from xml.etree import ElementTree
-
-#A infraestrutura á qual a bateria da apoio tem a capacidade maxima de 88kw, a bateria só é usada quando o número de carros na estaçao de carregamento é superior a 8, considerando cada carro 11kw.
-#A bateria tem uma capacidade máxima de 50kw.
 
 class Bateria:
     def __init__(self, capacidade_maxima, eficiencia):
@@ -28,7 +25,6 @@ class Bateria:
         return self.carga_atual
 
 
-#função para retirar os preços de energia da entso-e
 def get_dayahead_prices(api_key: str, area_code: str, start: datetime = None, end: datetime = None): 
     if not start:
         start = datetime.now().astimezone(timezone.utc)
@@ -49,7 +45,7 @@ def get_dayahead_prices(api_key: str, area_code: str, start: datetime = None, en
                 raise Exception(f"HTTP status code: {response.status}")
             xml_str = response.read().decode()
 
-        result = [0] * 24 #inicializar vetor de 24 valores com 0s
+        result = [0] * 24 
         for child in ElementTree.fromstring(xml_str):
             if child.tag.endswith("TimeSeries"):
                 for ts_child in child:
@@ -63,7 +59,7 @@ def get_dayahead_prices(api_key: str, area_code: str, start: datetime = None, en
                                 for po_child in pe_child:
                                     if po_child.tag.endswith("position"):
                                         delta = int(po_child.text) - 1
-                                        time_index = (start_time.hour + delta) % 24  #calcula o índice da hora na lista de preços
+                                        time_index = (start_time.hour + delta) % 24 
                                     elif po_child.tag.endswith("price.amount"):
                                         price = float(po_child.text)
                                         result[time_index] = price
@@ -71,16 +67,15 @@ def get_dayahead_prices(api_key: str, area_code: str, start: datetime = None, en
         return result
     except Exception as e:
         print(f"Error fetching data: {e}")
-        return [0] * 24 #se der erro retornar vetor vazio
+        return [0] * 24 
 
 
 
-api_key = "4513d294-67ee-43a2-9a3b-0c8335883d88" #key requesitada
-area_code = "10YPT-REN------W" #Portugal
+api_key = "4513d294-67ee-43a2-9a3b-0c8335883d88" 
+area_code = "10YPT-REN------W" 
 precos_eletricidade = get_dayahead_prices(api_key, area_code)
 
 tempo = list(range(24))
-
 
 source_primeiras_seis_horas = ColumnDataSource(data=dict(x=[], y=[]))
 source_horas_restantes = ColumnDataSource(data=dict(x=[], y=[]))
@@ -91,32 +86,48 @@ source_potencias = ColumnDataSource(data=dict(categoria=[], valor=[], color=[]))
 plot_primeiras_seis_horas = figure(title="State of Charge da Bateria nas Primeiras 6 Horas", x_axis_label='Horas', y_axis_label='SOC (%)')
 plot_primeiras_seis_horas.vbar(x='x', top='y', width=0.5, source=source_primeiras_seis_horas, color='green')
 
-plot_horas_restantes = figure(title="Energia da Bateria nas Horas Restantes", y_axis_label='Energia (kWh)')
-plot_horas_restantes.vbar(x='x', top='y', width=0.3, source=source_horas_restantes, color="blue")
+plot_horas_restantes = figure(title="Energia da Bateria nas Horas Restantes", y_axis_label='Energia (kWh)', x_range=(-1,1))
+plot_horas_restantes.vbar(x='x', top='y', width=0.5, source=source_horas_restantes, color="blue")
 
 plot_potencias = figure(title="Potências Asseguradas (Rede, Bateria, Total)", x_axis_label='Categoria', y_axis_label='Potência (kW)', x_range=['Rede', 'Bateria', 'Total'])
 plot_potencias.vbar(x='categoria', top='valor', width=0.5, source=source_potencias, color='color')
 
-#TABELA PARA MOSTRAR PREÇOS DA ENERGIA SEGUNDO O SITE DA ENTSO-E
 columns = [
     TableColumn(field="horas", title="Hora"),
     TableColumn(field="precos", title="Preço (EUR/MWh)", formatter=NumberFormatter(format="0.00"))
 ]
 data_table = DataTable(source=source_precos_eletricidade, columns=columns, width=400, height=280)
 
-#INPUTS
 capacity_input = TextInput(value="50", title="Capacidade Máxima da Bateria (kWh):")
 efficiency_input = TextInput(value="100", title="Eficiência da Bateria (%):")
-num_cars_input = TextInput(value="0", title="Número de Carros:")
+num_ve_input = TextInput(value="0", title="Número de Veículos Elétricos:")
 update_button = Button(label="Atualizar Gráficos")
+
+
+error_div = Div(text='', style={'color': 'red'})
+
+def show_alert(message):
+    error_div.text = message
 
 def update_plots():
     try:
         capacidade_maxima = int(capacity_input.value)
         eficiencia = int(efficiency_input.value) / 100
-        num_cars = int(num_cars_input.value)
-        energia_ev = num_cars * 11  #cada carro 11kw
+        num_ve = int(num_ve_input.value)
+        energia_ev = num_ve * 11  
         bateria = Bateria(capacidade_maxima, eficiencia)
+        capacidade_infraestrutura = 88;
+        num_ve_infmax=8;
+        
+        if not (0 <= capacidade_maxima <= 50):
+            show_alert("Capacidade Máxima deve estar entre 0 e 50 kWh.")
+            return
+        if not (0 <= eficiencia <= 1):
+            show_alert("Eficiência deve estar entre 0% e 100%.")
+            return
+        if not (0 <= num_ve <= 12):
+            show_alert("Número de Veículos Elétricos deve estar entre 0 e 12.")
+            return
         
         cargas_bateria_primeiras_seis_horas = []
         for i in range(6):
@@ -127,9 +138,9 @@ def update_plots():
        
         soc = (bateria.carga_atual / bateria.capacidade_maxima) * 100
         
-        if energia_ev <= 88 and bateria.carga_atual < bateria.capacidade_maxima and bateria.carga_atual + energia_ev < 90 and num_cars<=8:
+        if energia_ev <= capacidade_infraestrutura and bateria.carga_atual < bateria.capacidade_maxima and bateria.carga_atual + energia_ev <= capacidade_infraestrutura and num_ve<=num_ve_infmax:
             bateria.carregar(energia_ev)
-        elif energia_ev > 88 and soc > 20 and num_cars > 8:
+        elif energia_ev > capacidade_infraestrutura and soc > 20 and num_ve > num_ve_infmax:
             bateria.descarregar(energia_ev)
         
         carga_bateria_horas_restantes = bateria.nivel_de_carga()
@@ -137,8 +148,8 @@ def update_plots():
         source_primeiras_seis_horas.data = dict(x=list(range(6)), y=[c / capacidade_maxima * 100 for c in cargas_bateria_primeiras_seis_horas])
         source_horas_restantes.data = dict(x=[0], y=[carga_bateria_horas_restantes])
         
-        potencia_rede = min(88, energia_ev)
-        potencia_bateria = max(0, energia_ev - 88) if energia_ev > 88 else 0
+        potencia_rede = min(capacidade_infraestrutura, energia_ev)
+        potencia_bateria = max(0, energia_ev - capacidade_infraestrutura) if energia_ev > capacidade_infraestrutura else 0
         potencia_total = potencia_rede + potencia_bateria
 
         source_potencias.data = dict(
@@ -146,20 +157,21 @@ def update_plots():
             valor=[potencia_rede, potencia_bateria, potencia_total],
             color=['red', 'blue', 'green']
         )
+        show_alert("") 
     
     except ValueError as e:
-        print(f"Erro de valor: {e}")
+        show_alert(f"Erro de valor: {e}")
 
 update_button.on_click(update_plots)
 
 layout = column(
     capacity_input, 
     efficiency_input, 
-    num_cars_input, 
+    num_ve_input, 
     update_button, 
+    error_div,
     row(plot_primeiras_seis_horas, plot_horas_restantes, plot_potencias), 
     data_table
 )
 
 curdoc().add_root(layout)
-

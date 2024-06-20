@@ -2,7 +2,7 @@
 This code implements a rules-based battery control model and produces an interface using Bokeh, an interactive data visualization library for Python.
 This battery system provides support to an electric vehicle (EV) charging station, enabling an increased number of cars to charge simultaneously.
 
-In this code, each car is assumed to consume 11 kW, and the charging station has a capacity of 88 kW.
+In this code, each eletricle vehicle is assumed to consume an average 11 kW, and the charging station has a capacity of 88 kW.
 
 Features:
 
